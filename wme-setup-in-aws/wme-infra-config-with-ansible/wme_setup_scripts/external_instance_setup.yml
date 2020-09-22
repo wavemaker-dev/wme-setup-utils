@@ -12,12 +12,33 @@
   
 
   tasks:
-  - name: creating file system for volumes
+  # aws instance operations(volume mounting)
+  - name: finding volume device type for nitro volumes
+    shell: lsblk -o NAME -n | grep nvme*
+    register: nitro_volumes
+    ignore_errors: True
+
+  - name: finding volume device for ebs volumes
+    shell: lsblk -o NAME -n | grep xvd*
+    register: ebs_volumes
+    ignore_errors: True
+
+  - name: creating file system for EBS volumes
     filesystem:
       fstype: ext4
       dev: "{{ item }}"
     with_items:
       - /dev/xvdb
+    when: ebs_volumes.rc == 0
+  
+  - name: creating file system for nitro volumes
+    filesystem:
+      fstype: ext4
+      dev: "{{ item }}"
+    with_items:
+      - /dev/nvme1n1
+    when: nitro_volumes.rc == 0
+
   - name: Create a directory data
     file:
       path: "{{ item }}"
@@ -25,12 +46,21 @@
       mode: '0755'
     with_items:
       - /data
-  - name: mounting data volume
+  - name: mounting data volume for EBS volumes
     mount:
       path: /data
       src: /dev/xvdb
       fstype: ext4
       state: mounted
+    when: ebs_volumes.rc == 0
+
+  - name: mounting wm-data volume for nitro volumes
+    mount:
+      path: /data
+      src: /dev/nvme1n1
+      fstype: ext4
+      state: mounted
+    when: nitro_volumes.rc == 0
   
   - name: update cache for ubuntu
     apt:
@@ -100,6 +130,7 @@
     when: 
       - ansible_os_family == "Debian"
       - custom_user_setup == "yes"
+    ignore_errors: True
 
   
   # installing pip3 and wget
@@ -162,11 +193,15 @@
 
   - name: adding ec2 user to the docker group
     shell: usermod -aG docker {{ rhel_os_user_name }}
-    when: ansible_os_family == "RedHat"
+    when: 
+     - ansible_os_family == "RedHat"
+     - custom_user_setup == "yes"
 
   - name: reboot the system for docker configure
     reboot:
-    when: ansible_os_family == "RedHat"
+    when: 
+     - ansible_os_family == "RedHat"
+     - custom_user_setup == "yes"
 
 # custom user permissions in RHEL instance
   - name: adding permissions to user in RHEL
@@ -183,3 +218,4 @@
     when: 
       - ansible_os_family == "RedHat"
       - custom_user_setup == "yes"
+    ignore_errors: True

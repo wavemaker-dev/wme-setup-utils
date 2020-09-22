@@ -24,16 +24,38 @@
     platform_network_interfacename: "{{ network_interface_name }}"
     CIDR_range_for_wme_setup: "{{ cidr_range_for_docker_setup }}"
     sha1sum_link: "{{ wme_sha1sum_url }}"
+    
 
   tasks:
   # aws instance operations(volume mounting)
-  - name: creating file system for volumes
+  - name: finding volume device type for nitro volumes
+    shell: lsblk -o NAME -n | grep nvme*
+    register: nitro_volumes
+    ignore_errors: True
+
+  - name: finding volume device for ebs volumes
+    shell: lsblk -o NAME -n | grep xvd*
+    register: ebs_volumes
+    ignore_errors: True
+
+  - name: creating file system for ebs volumes
     filesystem:
       fstype: ext4
       dev: "{{ item }}"
     with_items:
       - /dev/xvdb
       - /dev/xvdc
+    when: ebs_volumes.rc == 0
+
+  - name: creating file system for nitro volumes
+    filesystem:
+      fstype: ext4
+      dev: "{{ item }}"
+    with_items:
+      - /dev/nvme1n1
+      - /dev/nvme2n1
+    when: nitro_volumes.rc == 0
+
   - name: Create a directory data-volumes
     file:
       path: "{{ item }}"
@@ -42,18 +64,36 @@
     with_items:
       - /wm-runtime
       - /wm-data
-  - name: mounting wm-data volume
+
+  - name: mounting wm-data volume for ebs volumes
     mount:
       path: /wm-data
       src: /dev/xvdb
       fstype: ext4
       state: mounted
-  - name: mounting wm-runtime volume
+    when: ebs_volumes.rc == 0
+  - name: mounting wm-runtime volume for ebs volumes
     mount:
       path: /wm-runtime
       src: /dev/xvdc
       fstype: ext4
       state: mounted
+    when: ebs_volumes.rc == 0
+
+  - name: mounting wm-data volume for nitro volumes
+    mount:
+      path: /wm-data
+      src: /dev/nvme2n1
+      fstype: ext4
+      state: mounted
+    when: nitro_volumes.rc == 0
+  - name: mounting wm-runtime volume for nitro volumes
+    mount:
+      path: /wm-runtime
+      src: /dev/nvme1n1
+      fstype: ext4
+      state: mounted
+    when: nitro_volumes.rc == 0
    
 # updating cache for debian and RHEL
   - name: update cache for debian
@@ -133,11 +173,15 @@
 
   - name: adding rhel os user to the docker group
     shell: usermod -aG docker {{ rhel_os_user_name }}  
-    when: ansible_os_family == "RedHat"
+    when: 
+     - ansible_os_family == "RedHat"
+     - custom_user_setup == "no"
 
   - name: reboot the system for docker configure
     reboot:
-    when: ansible_os_family == "RedHat"
+    when: 
+     - ansible_os_family == "RedHat"
+     - custom_user_setup == "no"
 
 
 # installing deb file and finding debfilename and installation folder
@@ -177,13 +221,13 @@
       - ansible_os_family == "Debian"
       - sha1sum_link != ""
   
-  - name: setting debfile name from url sha
+  - name: setting debfile name from sha1sum url
     set_fact:
       deb_file_name: "{{ deb_file_name_from_url.stdout }}"
     when: deb_file_name_from_url.changed 
   
     
-  - name: finding a deb file name for without sha1sum url
+  - name: finding a deb file name from without sha1sum url
     shell:
       cmd: echo {{ installer_link }} | awk -F/ '{print $8}'  
       chdir: /home/{{ debian_os_user_name }}/
@@ -193,7 +237,7 @@
       - ansible_os_family == "Debian"
       - sha1sum_link == ""
   
-  - name: setting debfile name from without url sha1sum
+  - name: setting debfile name from without sha1sum url
     set_fact:
       deb_file_name: "{{ deb_file_name_from_url.stdout }}"
     when: deb_file_name_from_url.changed 
@@ -291,12 +335,13 @@
       ssh-keygen -y -f /home/{{ customuser_name }}/{{ pemfile_name.stdout }} > /home/{{ customuser_name }}/.ssh/authorized_keys
       rm -f /home/{{ debian_os_user_name }}/{{ pemfile_name.stdout }}
       chown -R {{ customuser_name }}:{{ customuser_name }} /home/{{ customuser_name }}/
-      chown -R {{ customuser_name }}:{{ customuser_name }} /wm-data /wm-runtime
+      chown -R {{ customuser_name }}:{{ customuser_name }} /wm-data 
       addgroup docker
       usermod -aG docker {{ customuser_name }}
     when: 
       - ansible_os_family == "Debian"
       - custom_user_setup == "yes"
+    ignore_errors: True
   
   - name: installing wme setup with custom user ssh keys in Debian
     expect:
@@ -337,11 +382,12 @@
       ssh-keygen -y -f /home/{{ customuser_name }}/{{ pemfile_name.stdout }} > /home/{{ customuser_name }}/.ssh/authorized_keys
       rm -f /home/{{ rhel_os_user_name }}/{{ pemfile_name.stdout }}
       chown -R {{ customuser_name }}:{{ customuser_name }} /home/{{ customuser_name }}/
-      chown -R {{ customuser_name }}:{{ customuser_name }} /wm-data /wm-runtime
+      chown -R {{ customuser_name }}:{{ customuser_name }} /wm-data 
       usermod -aG docker {{ customuser_name }}
     when: 
       - ansible_os_family == "RedHat"
       - custom_user_setup == "yes"
+    ignore_errors: True
 
 # Installing tar file and installing wme in RHEL instances
 #echo {{ installer_link }} | awk -F/ '{print $8}' #
@@ -366,13 +412,13 @@
       - ansible_os_family == "RedHat"
       - sha1sum_link != ""
   
-  - name: setting tarfile name from with sha
+  - name: setting tarfile name from using sha1sum url
     set_fact:
       wme_tar_installer_name: "{{ wme_tar_installer_file_name.stdout }}"
     when: wme_tar_installer_file_name.changed 
 
 
-  - name: finding tar file name for extraction without sha1sum
+  - name: finding tar file name for extraction without sha1sum url
     shell:
       cmd: echo {{ installer_link }} | awk -F/ '{print $8}' 
     register: wme_tar_installer_file_name
@@ -381,7 +427,7 @@
       - ansible_os_family == "RedHat"
       - sha1sum_link == ""
 
-  - name: setting tarfile name from without sha
+  - name: setting tarfile name from without sha1sum url
     set_fact:
       wme_tar_installer_name: "{{ wme_tar_installer_file_name.stdout }}"
     when: wme_tar_installer_file_name.changed 
@@ -544,6 +590,7 @@
           cookie: "{{ admin_login.set_cookie }}"
     when: installer_link != ""
 
+
   - name: wme setup installation in config portal
     uri:
       url: http://{{ platform_ip }}:8080/config-services/rest/installations
@@ -559,6 +606,21 @@
       headers:
           cookie: "{{ admin_login.set_cookie }}"
     when: installer_link != ""
+
+
+
+
+
+ 
+  
+
+    
+
+
+
+
+
+
 
 
 # updating the wme setup by running patch for debian OS instances
