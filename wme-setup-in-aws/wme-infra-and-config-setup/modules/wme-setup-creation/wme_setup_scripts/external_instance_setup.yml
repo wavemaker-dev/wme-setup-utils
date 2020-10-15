@@ -195,13 +195,11 @@
     shell: usermod -aG docker {{ rhel_os_user_name }}
     when: 
      - ansible_os_family == "RedHat"
-     - custom_user_setup == "yes"
 
   - name: reboot the system for docker configure
     reboot:
     when: 
      - ansible_os_family == "RedHat"
-     - custom_user_setup == "yes"
 
 # custom user permissions in RHEL instance
   - name: adding permissions to user in RHEL
