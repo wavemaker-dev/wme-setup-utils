@@ -61,6 +61,10 @@ resource "aws_instance" "Platform" {
   tags = {
     Name = "WME-platform-Instance-${var.enterpise_name}"
   }
+  volume_tags = {
+    Name = "WME-platform-Instance-${var.enterpise_name}"
+    Env = "wme-dev"
+  }
   root_block_device {
     volume_type           = "gp2"
     volume_size           = "50"
@@ -106,6 +110,11 @@ resource "aws_instance" "StudioWorkspace" {
   tags = {
     Name = "WME-studio-workspace-Instance-${var.enterpise_name}-${count.index}"
   }
+  
+  volume_tags = {
+    Name = "WME-studio-workspace-Instance-${var.enterpise_name}-${count.index}"
+    Env = "wme-dev"
+  }
   root_block_device {
     volume_type           = "gp2"
     volume_size           = "50"
@@ -141,6 +150,10 @@ resource "aws_instance" "AppDeployment" {
   depends_on = [aws_security_group.WME-SG-Workspace-Internal]
   tags = {
     Name = "WME-AppDeployment-Instance-${var.enterpise_name}-${count.index}"
+  }
+  volume_tags = {
+    Name = "WME-AppDeployment-Instance-${var.enterpise_name}-${count.index}"
+    Env = "wme-dev"
   }
   root_block_device {
     volume_type           = "gp2"

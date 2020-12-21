@@ -46,6 +46,7 @@ data "aws_ami" "wme_rhel8_ami" {
 
 locals {
   user_name = var.operating_system == "rhel" ? var.RHEL_os_user_name : var.ubuntu_os_user_name
+  ssh_pem_file = var.setup_with_custom_sshkeys == "yes" ? var.internal_user_ssh_key_for_wavemaker : var.private_keypath_in_local
 }
 
 
@@ -60,6 +61,11 @@ resource "aws_instance" "Platform" {
   depends_on                  = [aws_security_group.WME-SG-Platform-Internal, aws_security_group.WME-SG-Platform-Public]
   tags = {
     Name = "WME-platform-Instance-${var.enterpise_name}"
+    Env = "wme-dev"
+  }
+  volume_tags = {
+    Name = "WME-platform-Instance-${var.enterpise_name}"
+    Env = "wme-dev"
   }
   root_block_device {
     volume_type           = "gp2"
@@ -85,32 +91,40 @@ resource "aws_instance" "Platform" {
     host        = self.public_ip
   }
 
+
   provisioner "remote-exec" {
     inline = [
       "sudo echo 'provison of wme platform instance started'",
     ]
   }
   provisioner "local-exec" {
-    command = "scp -i ${var.private_keypath_in_local} -o StrictHostKeyChecking=no ${var.internal_user_ssh_key_for_wavemaker} ${local.user_name}@${aws_instance.Platform.public_ip}:~"
+    command = "scp -i ${var.private_keypath_in_local} -o StrictHostKeyChecking=no ${local.ssh_pem_file} ${local.user_name}@${aws_instance.Platform.public_ip}:~"
     on_failure = continue
   }
+  
+  provisioner "local-exec" {
+    command = "scp -i ${var.private_keypath_in_local} -o StrictHostKeyChecking=no ${var.user_license_file} ${local.user_name}@${aws_instance.Platform.public_ip}:~"
+    on_failure = continue
+  }
+
   timeouts {
     create = "30m"
-    delete = "10m"
+    delete = "5m"
   }
 
 }
 
 
 resource "null_resource" "wme_platform_instance_configuration" {
-
+  count = var.WME_platform_configurations ? 1 : 0
   triggers = {
     always_run = "${timestamp()}"
   }
 
   provisioner "local-exec" {
-    command = "ansible-playbook -u ${local.user_name} -i '${aws_instance.Platform.public_ip},' --private-key ${var.private_keypath_in_local} -e 'wme_installer_url=${var.wme_installer_url} wme_sha1sum_url=${var.wme_sha1sum_url}  network_interface_name=${var.network_interface_name}  cidr_range_for_docker_setup=${var.cidr_range_for_docker_setup}  os_user_name=${local.user_name}  internal_user_ssh_key_for_wavemaker=${var.internal_user_ssh_key_for_wavemaker}  wavemaker_studio_domain=${var.wavemaker_studio_domain} wavemaker_built_apps_domain=${var.wavemaker_built_apps_domain}  internal_user_for_wavemaker=${var.internal_user_for_wavemaker} wme_patch_installer_url=${var.wme_patch_installer_url}  platform_instance_ip=${aws_instance.Platform.public_ip} setup_admin_password=${var.setup_admin_password} enterprise_name=${var.enterpise_name} admin_Email_Address=${var.admin_Email_Address} admin_user_firstname=${var.admin_user_firstname} admin_user_lastname=${var.admin_user_lastname} admin_user_password=${var.admin_user_password} operating_version=${var.operating_version} setup_with_custom_sshkeys=${var.setup_with_custom_sshkeys}' ${path.module}/wme_setup_scripts/platform_instance_setup.yml -vvv"
+    command = "timeout 60m ansible-playbook -u ${local.user_name} -i '${aws_instance.Platform.public_ip},' --private-key ${var.private_keypath_in_local} -e 'wme_installer_url=${var.wme_installer_url} appdeploy_instance_private_ip=${aws_instance.AppDeployment[count.index].private_ip} studio_workspace_instance_private_ip=${aws_instance.StudioWorkspace[count.index].private_ip}  wme_sha1sum_url=${var.wme_sha1sum_url}  user_license_file=${var.user_license_file}  network_interface_name=${var.network_interface_name}  cidr_range_for_docker_setup=${var.cidr_range_for_docker_setup}  os_user_name=${local.user_name}  internal_user_ssh_key_for_wavemaker=${var.internal_user_ssh_key_for_wavemaker}  wavemaker_studio_domain=${var.wavemaker_studio_domain} wavemaker_built_apps_domain=${var.wavemaker_built_apps_domain}  internal_user_for_wavemaker=${var.internal_user_for_wavemaker} wme_patch_installer_url=${var.wme_patch_installer_url} instance_addition_operation=${var.instance_addition_operation}  platform_instance_private_ip=${aws_instance.Platform.private_ip}  platform_instance_ip=${aws_instance.Platform.public_ip} setup_admin_password=${var.setup_admin_password} enterprise_name=${var.enterpise_name} admin_Email_Address=${var.admin_Email_Address} admin_user_firstname=${var.admin_user_firstname} admin_user_lastname=${var.admin_user_lastname} admin_user_password=${var.admin_user_password} operating_version=${var.operating_version} setup_with_custom_sshkeys=${var.setup_with_custom_sshkeys}' ${path.module}/wme_setup_scripts/platform_instance_setup.yml -vvv"
   }
+
 
 }
 
@@ -126,6 +140,11 @@ resource "aws_instance" "StudioWorkspace" {
   depends_on = [aws_security_group.WME-SG-Workspace-Internal]
   tags = {
     Name = "WME-studio-workspace-Instance-${var.enterpise_name}-${count.index}"
+    Env = "wme-dev"
+  }
+  volume_tags = {
+    Name = "WME-studio-workspace-Instance-${var.enterpise_name}-${count.index}"
+    Env = "wme-dev"
   }
   root_block_device {
     volume_type           = "gp2"
@@ -144,6 +163,7 @@ resource "aws_instance" "StudioWorkspace" {
     private_key = file(var.private_keypath_in_local)
     host        = self.public_ip
   }
+
 
   provisioner "remote-exec" {
     inline = [
@@ -161,7 +181,7 @@ resource "aws_instance" "StudioWorkspace" {
   }
   timeouts {
     create = "30m"
-    delete = "10m"
+    delete = "5m"
   }
 
 }
@@ -176,6 +196,11 @@ resource "aws_instance" "AppDeployment" {
   depends_on = [aws_security_group.WME-SG-Workspace-Internal]
   tags = {
     Name = "WME-AppDeployment-Instance-${var.enterpise_name}-${count.index}"
+    Env = "wme-dev"
+  }
+  volume_tags = {
+    Name = "WME-AppDeployment-Instance-${var.enterpise_name}-${count.index}"
+    Env = "wme-dev"
   }
   root_block_device {
     volume_type           = "gp2"
@@ -195,6 +220,8 @@ resource "aws_instance" "AppDeployment" {
     private_key = file(var.private_keypath_in_local)
     host        = self.public_ip
   }
+
+
   provisioner "remote-exec" {
     inline = [
       "sudo echo 'provision of AppDeployment instance stated'",
@@ -211,7 +238,7 @@ resource "aws_instance" "AppDeployment" {
   }
   timeouts {
     create = "30m"
-    delete = "10m"
+    delete = "5m"
   }
 }
 

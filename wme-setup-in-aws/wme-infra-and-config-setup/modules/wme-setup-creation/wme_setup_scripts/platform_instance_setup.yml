@@ -1,5 +1,5 @@
 ---
-- name: aws platform instances setup
+- name: WME platform instances setup
   hosts: all
   become: yes
   any_errors_fatal: true
@@ -24,38 +24,34 @@
     platform_network_interfacename: "{{ network_interface_name }}"
     CIDR_range_for_wme_setup: "{{ cidr_range_for_docker_setup }}"
     sha1sum_link: "{{ wme_sha1sum_url }}"
-    
+    license_file: "{{ user_license_file }}"
+    platform_private_ip: "{{ platform_instance_private_ip }}"
+    instance_addition: "{{ instance_addition_operation }}"
+    studio_instance_private_ip: "{{ studio_workspace_instance_private_ip }}"
+    appdeploy_instance_privateip: "{{ appdeploy_instance_private_ip }}"
+    wme_version: "{{ wme_platform_version }}"
 
   tasks:
+  - name: studio ips
+    shell: echo {{ studio_instance_private_ip }}
   # aws instance operations(volume mounting)
-  - name: finding volume device type for nitro volumes
-    shell: lsblk -o NAME -n | grep nvme*
-    register: nitro_volumes
-    ignore_errors: True
+  - name: Finding volume device names for wm-data volumes
+    shell: lsblk -o NAME,SIZE,FSTYPE -dsn | awk '$3 == "" && $2 == "150G" {print $1}'
+    register: wm_data_device
+  
+  - name: Finding volume device name for wm-runtime volume
+    shell: lsblk -o NAME,SIZE,FSTYPE -dsn | awk '$3 == "" && $2 == "50G" {print $1}'
+    register: wm_runtime_device
 
-  - name: finding volume device for ebs volumes
-    shell: lsblk -o NAME -n | grep xvd*
-    register: ebs_volumes
-    ignore_errors: True
-
-  - name: creating file system for ebs volumes
-    filesystem:
+  - name: creating file system for volumes
+    community.general.filesystem:
       fstype: ext4
       dev: "{{ item }}"
     with_items:
-      - /dev/xvdb
-      - /dev/xvdc
-    when: ebs_volumes.rc == 0
-
-  - name: creating file system for nitro volumes
-    filesystem:
-      fstype: ext4
-      dev: "{{ item }}"
-    with_items:
-      - /dev/nvme1n1
-      - /dev/nvme2n1
-    when: nitro_volumes.rc == 0
-
+      - /dev/{{ wm_data_device.stdout }}
+      - /dev/{{ wm_runtime_device.stdout }}
+    ignore_errors: True
+    
   - name: Create a directory data-volumes
     file:
       path: "{{ item }}"
@@ -65,36 +61,20 @@
       - /wm-runtime
       - /wm-data
 
-  - name: mounting wm-data volume for ebs volumes
+  - name: mounting wm-data volume for volumes
     mount:
       path: /wm-data
-      src: /dev/xvdb
+      src: /dev/{{ wm_data_device.stdout }}
       fstype: ext4
       state: mounted
-    when: ebs_volumes.rc == 0
-  - name: mounting wm-runtime volume for ebs volumes
+    
+  - name: mounting wm-runtime volume for volumes
     mount:
       path: /wm-runtime
-      src: /dev/xvdc
+      src: /dev/{{ wm_runtime_device.stdout }}
       fstype: ext4
       state: mounted
-    when: ebs_volumes.rc == 0
-
-  - name: mounting wm-data volume for nitro volumes
-    mount:
-      path: /wm-data
-      src: /dev/nvme2n1
-      fstype: ext4
-      state: mounted
-    when: nitro_volumes.rc == 0
-  - name: mounting wm-runtime volume for nitro volumes
-    mount:
-      path: /wm-runtime
-      src: /dev/nvme1n1
-      fstype: ext4
-      state: mounted
-    when: nitro_volumes.rc == 0
-   
+       
 # updating cache for debian and RHEL
   - name: update cache for debian
     apt:
@@ -127,40 +107,56 @@
   - name: install pexpect for wme installation setup inputs
     pip:
       name: pexpect
-    ignore_errors: True
-
 
 # RHEL instance prerequisites installing and IPv6 disable
+  - name: checking IPV6 address
+    shell: ip addr show | grep net6
+    register: ipv6_addr_checking
+    ignore_errors: True
+
+  - name: setup IPV6 validation variable
+    set_fact:
+      ipv6_address: "{{ ipv6_addr_checking.stdout }}"
+  
   - name: ipv6 disable in RHEL
     lineinfile:
       path: /etc/default/grub
       regexp: "^GRUB_CMDLINE_LINUX="
       line: 'GRUB_CMDLINE_LINUX="ipv6.disable=1 console=ttyS0,115200n8 console=tty0 net.ifnames=0 rd.blacklist=nouveau nvme_core.io_timeout=4294967295 crashkernel=auto"'
-    when: ansible_os_family == "RedHat"    
+    when: 
+     - ansible_os_family == "RedHat"
+     - ipv6_address != ""
   
   - name: updating grub conf file in rhel for ipv6 disable
     shell: grub2-mkconfig -o /boot/grub2/grub.cfg
-    when: ansible_os_family == "RedHat"
+    when: 
+      - ansible_os_family == "RedHat"
+      - ipv6_address != ""
+
 
   - name: reboot the system for updating the grub configurations
     reboot:
-    when: ansible_os_family == "RedHat"
+    when: 
+     - ansible_os_family == "RedHat"
+     - ipv6_address != ""
   
-  - name: installing SELinux container on RHEL 7 from remote url
+  - name: installing SELinux container in RHEL 7
     yum:
       name: http://ftp.riken.jp/Linux/cern/centos/7/extras/x86_64/Packages/container-selinux-2.10-2.el7.noarch.rpm
       state: present
     when: 
       - ansible_os_family == "RedHat"
       - rhel_os_version == "7"
-
   
   - name: installing Docker and python3
     yum:
       name: 
       - https://download.docker.com/linux/centos/7/x86_64/stable/Packages/docker-ce-18.06.2.ce-3.el7.x86_64.rpm
       - python3
-    when: ansible_os_family == "RedHat"
+      disable_gpg_check: yes 
+    when: 
+      - ansible_os_family == "RedHat"
+      - wme_version == "10.5.3" or wme_version == "10.5.6"
 
   
   - name: starting Docker in rhel
@@ -169,31 +165,27 @@
       state: started
       enabled: yes
     become: true
-    when: ansible_os_family == "RedHat"
+    when: 
+      - ansible_os_family == "RedHat"
+      - wme_version == "10.5.3" or wme_version == "10.5.6"
 
   - name: adding rhel os user to the docker group
     shell: usermod -aG docker {{ rhel_os_user_name }}  
     when: 
      - ansible_os_family == "RedHat"
      - custom_user_setup == "no"
+     - wme_version == "10.5.3" or wme_version == "10.5.6"
 
-  - name: reboot the system for docker configure
-    reboot:
-    when: 
-     - ansible_os_family == "RedHat"
-     - custom_user_setup == "no"
 
 
 # installing deb file and finding debfilename and installation folder
- # echo {{ installer_link }} | awk -F/ '{print $8}' 
- # echo {{ sha1sum_link }} | awk -F/ '{print $8}'
-  - name: finding a sha1sum file
+
+  - name: finding a sha1sum file for validate
     shell:
       cmd: echo {{ sha1sum_link }} | awk -F/ '{print $8}' 
     register: sha1sum_file
     when: 
       - sha1sum_link != ""
-      
 
   - name: finding sha1sum file name 
     shell: echo {{ sha1sum_file.stdout }} | awk -F/ '{print $8}' | awk -F? '{print $1}'
@@ -201,8 +193,6 @@
     when: 
       - sha1sum_link != ""
       
-    
-
   - name: finding a deb file
     shell:
       cmd: echo {{ installer_link }} | awk -F/ '{print $8}'  
@@ -213,7 +203,7 @@
       - ansible_os_family == "Debian"
       - sha1sum_link != ""
     
-  - name: finding a deb file name with sha1sum url
+  - name: finding a deb file name when using sha1sum for validate installer file
     shell: echo {{ deb_file.stdout }} | awk -F/ '{print $8}' | awk -F? '{print $1}'
     register: deb_file_name_from_url
     when: 
@@ -221,13 +211,13 @@
       - ansible_os_family == "Debian"
       - sha1sum_link != ""
   
-  - name: setting debfile name from sha1sum url
+  - name: setting up debfile name when using sha1sum for validate installer file
     set_fact:
       deb_file_name: "{{ deb_file_name_from_url.stdout }}"
     when: deb_file_name_from_url.changed 
   
     
-  - name: finding a deb file name from without sha1sum url
+  - name: finding a deb file name when not using sha1sum for validation
     shell:
       cmd: echo {{ installer_link }} | awk -F/ '{print $8}'  
       chdir: /home/{{ debian_os_user_name }}/
@@ -237,14 +227,14 @@
       - ansible_os_family == "Debian"
       - sha1sum_link == ""
   
-  - name: setting debfile name from without sha1sum url
+  - name: setting debfile name when not using sha1sum for validation
     set_fact:
       deb_file_name: "{{ deb_file_name_from_url.stdout }}"
     when: deb_file_name_from_url.changed 
   
   - name: getting wme-installer folder name
     shell:
-      cmd: echo {{ deb_file_name }} | awk -F- '{print $3}' | sed 's/.deb//g'
+      cmd: echo {{ deb_file_name }} | awk -F- '{print $2}' | sed 's/.deb//g'
       chdir: /home/{{ debian_os_user_name }}/
     register: wme_folder_name
     when: 
@@ -259,8 +249,16 @@
     when:
       - sha1sum_link != ""
       - ansible_os_family == "Debian"
+  
+  - name: checking deb file existance
+    stat:
+      path: /home/{{ debian_os_user_name }}/{{ deb_file_name }}
+    register: deb_file_status
+    when:
+      - installer_link != ""
+      - ansible_os_family == "Debian"
 
-  - name: downloading the wme deb file
+  - name: downloading the wme deb installer file
     get_url: 
       url: "{{ installer_link }}"
       dest: /home/{{ debian_os_user_name }}/
@@ -268,8 +266,9 @@
     when:
       - installer_link != ""
       - ansible_os_family == "Debian"
+      - not deb_file_status.stat.exists
     
-  - name: sha1sum checking for wme installer file
+  - name: validating sha1sum for wme installer file
     shell: sha1sum -c {{ sha1sum_file_name.stdout }}
     args:
       chdir: /home/{{ debian_os_user_name }}/
@@ -288,22 +287,9 @@
     when:
       - installer_link != ""
       - ansible_os_family == "Debian"
+      - not deb_file_status.stat.exists
    
 # installing wme in debian Platform Instance below version 10.5.1   
-
-  - name: installing wme setup in Debian
-    expect:
-      command: bash /usr/local/content/wme/wme-installer/{{ wme_folder_name.stdout }}/wme-installer.sh
-      responses:
-        (?i)Enter an interface name assigned to a network *: "{{ platform_network_interfacename }}"
-        (?i)Do you want to proceed *: y
-        (?i)Enter an IP range in CIDR notation for internal use *: "{{ CIDR_range_for_wme_setup }}"
-      timeout: 1000
-    when: 
-      - installer_link != ""
-      - ansible_os_family == "Debian"
-      - custom_user_setup == ""
-
     # custom user creation in instance 
     
 
@@ -328,12 +314,12 @@
     when: 
       - custom_user_setup == "yes"
 
-  # with custom user setup configurations in Debian, custom_os_user
+
+  # with custom ssh setup configurations in Debian
   - name: adding permissions to custom user in Debian
     shell: | 
       cp /home/{{ debian_os_user_name }}/{{ pemfile_name.stdout }} /home/{{ customuser_name }}
       ssh-keygen -y -f /home/{{ customuser_name }}/{{ pemfile_name.stdout }} > /home/{{ customuser_name }}/.ssh/authorized_keys
-      rm -f /home/{{ debian_os_user_name }}/{{ pemfile_name.stdout }}
       chown -R {{ customuser_name }}:{{ customuser_name }} /home/{{ customuser_name }}/
       chown -R {{ customuser_name }}:{{ customuser_name }} /wm-data 
       addgroup docker
@@ -341,8 +327,19 @@
     when: 
       - ansible_os_family == "Debian"
       - custom_user_setup == "yes"
+      - wme_docker_container_validatation == "0"
     ignore_errors: True
   
+  - name: checking WME installation
+    shell: docker ps | grep wavemaker | wc -l
+    register: wme_installation_validatation
+    ignore_errors: True
+  
+  - name: wme docker containers validatation
+    set_fact: 
+      wme_docker_container_validatation: "{{ wme_installation_validatation.stdout }}"
+
+    
   - name: installing wme setup with custom user ssh keys in Debian
     expect:
       command: bash /usr/local/content/wme/wme-installer/{{ wme_folder_name.stdout }}/wme-installer.sh
@@ -354,11 +351,13 @@
         (?i)Enter an user*: "{{ customuser_name }}"
         (?i)Enter an keypath*: /home/{{ customuser_name }}/{{ pemfile_name.stdout }}
         (?i)Are you sure you want to continue connecting*: "yes"
-      timeout: 1000
+      timeout: 600
     when: 
       - installer_link != ""
       - ansible_os_family == "Debian"
       - custom_user_setup == "yes"
+      - wme_docker_container_validatation == "0"
+      
     
   - name: installing wme setup without custom user ssh keys in Debian
     expect:
@@ -369,32 +368,30 @@
         (?i)Enter an IP range in CIDR notation for internal use *: "{{ CIDR_range_for_wme_setup }}"
         (?i)Do you want to configure your own ssh keys*: n
         (?i)Are you sure you want to continue connecting*: "yes"
-      timeout: 1000
+      timeout: 600
     when: 
       - installer_link != ""
       - ansible_os_family == "Debian"
       - custom_user_setup == "no"
+      - wme_docker_container_validatation == "0"
   
-#  with custom user configurations in RHEL
+#  with custom ssh configurations in RHEL
   - name: adding permissions to user in RHEL
     shell: |
       cp /home/{{ rhel_os_user_name }}/{{ pemfile_name.stdout }} /home/{{ customuser_name }}/
       ssh-keygen -y -f /home/{{ customuser_name }}/{{ pemfile_name.stdout }} > /home/{{ customuser_name }}/.ssh/authorized_keys
-      rm -f /home/{{ rhel_os_user_name }}/{{ pemfile_name.stdout }}
       chown -R {{ customuser_name }}:{{ customuser_name }} /home/{{ customuser_name }}/
       chown -R {{ customuser_name }}:{{ customuser_name }} /wm-data 
       usermod -aG docker {{ customuser_name }}
     when: 
       - ansible_os_family == "RedHat"
       - custom_user_setup == "yes"
+      - wme_docker_container_validatation == "0"
     ignore_errors: True
 
 # Installing tar file and installing wme in RHEL instances
-#echo {{ installer_link }} | awk -F/ '{print $8}' #
 
-  
-
-  - name: finding tar file name for extraction when url have sha1sum
+  - name: finding tar file name for extraction when sha1sum file is given for validate installer file
     shell:
       cmd: echo {{ installer_link }} | awk -F/ '{print $8}' 
     register: wme_tar_installer
@@ -404,7 +401,7 @@
       - sha1sum_link != ""
     
     
-  - name: finding tar file name when url have sha1sum
+  - name: finding tar file name when sha1sum file is given for validate installer file
     shell: echo {{ wme_tar_installer.stdout }} | awk -F/ '{print $8}' | awk -F? '{print $1}'
     register: wme_tar_installer_file_name
     when: 
@@ -412,13 +409,13 @@
       - ansible_os_family == "RedHat"
       - sha1sum_link != ""
   
-  - name: setting tarfile name from using sha1sum url
+  - name: setting tarfile name when sha1sum file given for validate installer file
     set_fact:
       wme_tar_installer_name: "{{ wme_tar_installer_file_name.stdout }}"
     when: wme_tar_installer_file_name.changed 
 
 
-  - name: finding tar file name for extraction without sha1sum url
+  - name: finding tar file name for extraction ,when no validation for installer file with sha1sum
     shell:
       cmd: echo {{ installer_link }} | awk -F/ '{print $8}' 
     register: wme_tar_installer_file_name
@@ -427,7 +424,7 @@
       - ansible_os_family == "RedHat"
       - sha1sum_link == ""
 
-  - name: setting tarfile name from without sha1sum url
+  - name: setting up tarfile name when not validating the installer file 
     set_fact:
       wme_tar_installer_name: "{{ wme_tar_installer_file_name.stdout }}"
     when: wme_tar_installer_file_name.changed 
@@ -450,7 +447,13 @@
       - sha1sum_link != ""
       - ansible_os_family == "RedHat"
       
-      
+  - name: checking for existing tar installer file
+    stat:
+      path: /home/{{ rhel_os_user_name }}/{{ wme_tar_installer_name }}
+    register: tar_file_status
+    when: 
+      - installer_link != ""
+      - ansible_os_family == "RedHat"
 
   - name: downloading wme tar file
     get_url:
@@ -460,8 +463,9 @@
     when: 
       - installer_link != ""
       - ansible_os_family == "RedHat"
+      - not tar_file_status.stat.exists
     
-  - name: sha1sum checking for wme installer file
+  - name: sha1sum validation for wme installer file
     shell: sha1sum -c {{ sha1sum_file_name.stdout }}
     args:
       chdir: /home/{{ rhel_os_user_name }}/
@@ -489,25 +493,13 @@
     when: 
       - installer_link != ""
       - ansible_os_family == "RedHat"
+      - not tar_file_status.stat.exists
 
   - name: setting python3
     shell:
       cmd: ln -fs /usr/bin/python3.6 /usr/bin/python
     when: ansible_os_family == "RedHat"
 
-# wme setup on RHEL instance before 10.5.1 version
-  - name: installing wme setup on rhel 
-    expect:
-      command: bash /usr/local/content/{{ wme_tar_folder.stdout }}/wme-installer.sh
-      responses:
-        (?i)Enter an interface name assigned to a network *: "{{ platform_network_interfacename }}"
-        (?i)Do you want to proceed *: y
-        (?i)Enter an IP range in CIDR notation for internal use *: "{{ CIDR_range_for_wme_setup }}"
-      timeout: 1000
-    when: 
-      - installer_link != ""
-      - ansible_os_family == "RedHat"
-      - custom_user_setup == ""
     
 # Installing wme with custom user configurations in RHEL
   - name: installing wme setup with custom user ssh keys in RHEL
@@ -521,11 +513,12 @@
         (?i)Enter an user*: "{{ customuser_name }}"
         (?i)Enter an keypath*: /home/{{ customuser_name }}/{{ pemfile_name.stdout }}
         (?i)Are you sure you want to continue connecting*: "yes"
-      timeout: 1000
+      timeout: 600
     when: 
       - installer_link != ""
       - ansible_os_family == "RedHat"
       - custom_user_setup == "yes"
+      - wme_docker_container_validatation == "0"
     
   - name: installing wme setup without custom user ssh keys in RHEL
     expect:
@@ -536,11 +529,12 @@
         (?i)Enter an IP range in CIDR notation for internal use *: "{{ CIDR_range_for_wme_setup }}"
         (?i)Do you want to configure your own ssh keys*: n
         (?i)Are you sure you want to continue connecting*: "yes"
-      timeout: 1000
+      timeout: 600
     when: 
       - installer_link != ""
       - ansible_os_family == "RedHat"
       - custom_user_setup == "no"
+      - wme_docker_container_validatation == "0"
 
 # config wizard setup for wme , with providing user details
   - name: setup admin password for config portal
@@ -548,7 +542,10 @@
       url: http://{{ platform_ip }}:8080/config-services/rest/setup?password={{ admin_passwd }}
       method: POST
       return_content: yes
-    when: installer_link != ""
+    when:
+    - installer_link != ""
+    - wme_docker_container_validatation == "0"
+
   - name: login to config portal
     uri:
       url: http://{{ platform_ip }}:8080/config-services/rest/login
@@ -560,7 +557,8 @@
           "password" : "{{ admin_passwd }}"
         }'
     register: admin_login
-    when: installer_link != ""
+    when: 
+     - installer_link != ""
 
   - name: config portal setup
     uri:
@@ -588,7 +586,9 @@
         }'
       headers:
           cookie: "{{ admin_login.set_cookie }}"
-    when: installer_link != ""
+    when: 
+      - installer_link != ""
+      - wme_docker_container_validatation == "0"
 
 
   - name: wme setup installation in config portal
@@ -605,21 +605,101 @@
               }'
       headers:
           cookie: "{{ admin_login.set_cookie }}"
-    when: installer_link != ""
-
-
-
-
-
- 
+    when: 
+      - installer_link != ""
+      - wme_docker_container_validatation == "0"
   
+  - name: Waiting until the config wizard setup is done
+    uri:
+      url: http://{{ platform_ip }}:8080/config-services/rest/installations?active=true
+      method: GET
+      return_content: yes
+      headers:
+          cookie: "{{ admin_login.set_cookie }}"
+    register: cw_status
+    until: cw_status.json[0].state == "RUNNING" and cw_status.json[0].installationAction.progress == 100
+    failed_when: cw_status.json[0].state == "FAILED"
+    retries: 50
+    delay: 60
+    ignore_errors: True
+
+  
+  - name: finding license file name
+    shell: echo {{ license_file }} | awk -F/ '{print $NF}'
+    register: license_name
+    when: 
+      - license_file != ""
+    
+  - name: cw status state 
+    set_fact:
+      cw_status_state: "{{ cw_status.json[0].state }}"
+    when: 
+      - license_file != ""
+
+
+  - name: cw installation action progress
+    set_fact: 
+      cw_installation_action_progress: "{{ cw_status.json[0].installationAction.progress }}"
+    when: 
+      - license_file != ""
 
     
+  - name: uploading license when OS is debian
+    shell: curl -u {{ user_mail }}:{{ user_password }} -F person=anonymous -F license=@/home/{{ debian_os_user_name }}/{{ license_name.stdout }} http://{{ platform_private_ip }}:8007/license/admin/licenses/file
+    when:
+      - ansible_os_family == "Debian"
+      - license_file != ""
+      - cw_status_state == "RUNNING" and cw_installation_action_progress == "100"
+
+  - name: uploading license when OS is RHEL
+    shell: curl -u {{ user_mail }}:{{ user_password }} -F person=anonymous -F license=@/home/{{ rhel_os_user_name }}/{{ license_name.stdout }} http://{{ platform_private_ip }}:8007/license/admin/licenses/file
+    when:
+      - ansible_os_family == "RedHat"
+      - license_file != ""
+      - cw_status_state == "RUNNING" and cw_installation_action_progress == "100"
+
+  - name: adding host entry for domain
+    shell: echo "{{ platform_private_ip }} {{ ent_domain_name }}" >> /etc/hosts
+    when: 
+      - instance_addition == "yes"
 
 
+  - name: Instance addition for Debian privilaged user
+    script: instance_addition.py -pr http -d {{ ent_domain_name }} -u {{ user_mail }} -p {{ user_password }} -pf /home/{{ debian_os_user_name }}/{{ pemfile_name.stdout }} -istdn studio -stdip {{ studio_instance_private_ip }}  -iqan appdeploy -qaip {{ appdeploy_instance_privateip }} -iu {{ debian_os_user_name }}
+    args:
+      executable: /usr/bin/python
+    when:
+      - instance_addition == "yes"
+      - ansible_os_family == "Debian"
+      - custom_user_setup == "no"
+  
+  - name: Instance addition for Debian unprivilaged user
+    script: instance_addition.py -pr http -d {{ ent_domain_name }} -u {{ user_mail }} -p {{ user_password }} -pf /home/{{ debian_os_user_name }}/{{ pemfile_name.stdout }} -istdn studio -stdip {{ studio_instance_private_ip }}  -iqan appdeploy -qaip {{ appdeploy_instance_privateip }} -iu {{ customuser_name }}
+    args:
+      executable: /usr/bin/python
+    when:
+      - instance_addition == "yes"
+      - ansible_os_family == "Debian"
+      - custom_user_setup == "yes"
 
-
-
+  - name: Instance addition for RHEL privilaged user
+    script: instance_addition.py -pr http -d {{ ent_domain_name }} -u {{ user_mail }} -p {{ user_password }} -pf /home/{{ rhel_os_user_name }}/{{ pemfile_name.stdout }} -istdn studio -stdip {{ studio_instance_private_ip }}  -iqan appdeploy -qaip {{ appdeploy_instance_privateip }} -iu {{ debian_os_user_name }}
+    args:
+      executable: /usr/bin/python
+    when:
+      - instance_addition == "yes"
+      - ansible_os_family == "RedHat"
+      - custom_user_setup == "no"
+  
+  - name: Instance addition for RHEL unprivilaged user
+    script: instance_addition.py -pr http -d {{ ent_domain_name }} -u {{ user_mail }} -p {{ user_password }} -pf /home/{{ rhel_os_user_name }}/{{ pemfile_name.stdout }} -istdn studio -stdip {{ studio_instance_private_ip }}  -iqan appdeploy -qaip {{ appdeploy_instance_privateip }} -iu {{ customuser_name }}
+    args:
+      executable: /usr/bin/python
+    when:
+      - instance_addition == "yes"
+      - ansible_os_family == "RedHat"
+      - custom_user_setup == "yes"
+ 
 
 
 

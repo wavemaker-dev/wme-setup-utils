@@ -5,6 +5,19 @@ variable "wme_installer_url" {
   default     = ""
 
 }
+variable "region" {
+  description = "aws region"
+  type        = string
+}
+variable "access_key" {
+  description = "aws user access key"
+  type        = string
+}
+variable "secret_key" {
+  description = "aws user secret key"
+  type        = string
+}
+
 variable "wme_patch_installer_url" {
   description = "wme patch installer link"
   type        = string
@@ -43,6 +56,7 @@ variable "operating_version" {
 variable "private_keypath_in_local" {
   description = "pemfile location in local for instance ssh"
   type        = string
+  default     = ""
 
 }
 
@@ -70,12 +84,14 @@ variable "private_subnet_id" {
 variable "pemfilename_in_aws" {
   description = "pemfilename_in_aws for ssh into machine"
   type        = string
+  default     = ""
 
 }
 
 variable "vpc_id" {
   description = "vps id for creating security groups and instance"
   type        = string
+  default     = ""
 
 }
 
@@ -89,24 +105,28 @@ variable "setup_admin_password" {
 variable "enterpise_name" {
   description = "name of the enterprise"
   type        = string
+  default     = ""
 
 }
 
 variable "admin_Email_Address" {
   description = "email address of the user"
   type        = string
+  default     = ""
 
 }
 
 variable "admin_user_firstname" {
   description = "first name of the launchpad admin user"
   type        = string
+  default     = ""
 
 }
 
 variable "admin_user_lastname" {
   description = "last name of the launchpad admin user"
   type        = string
+  default     = ""
 
 }
 
@@ -126,7 +146,7 @@ variable "setup_with_custom_sshkeys" {
 variable "internal_user_for_wavemaker" {
   description = "custom user name for comminication between platform ,studio and appdeploy instances in setup"
   type        = string
-  default     = "wave"
+  default     = "wavemaker"
 }
 
 
@@ -135,11 +155,13 @@ variable "internal_user_for_wavemaker" {
 variable "wavemaker_built_apps_domain" {
   description = "custom cloud domain name example: wm-app.myent.com"
   type        = string
+  default     = ""
 }
 
 variable "wavemaker_studio_domain" {
   description = "custom enterprise domain name"
   type        = string
+  default     = ""
 }
 
 variable "ssh_ip_cidr_range" {
@@ -175,36 +197,42 @@ variable "internal_user_ssh_key_for_wavemaker" {
 
 variable "wme_sha1sum_url" {
   description = "sha1sum file url for checking wme file sha1sum"
-  type  = string
-  default = ""
+  type        = string
+  default     = ""
 }
 
 variable "no_of_appdeployment_instances" {
   description = "no of appdeployment instances"
-  type  = number
-  default = 1
+  type        = number
+  default     = 1
 }
 
 variable "no_of_studio_workspace_instances" {
   description = "no fo studio workspace instances"
-  type = number
-  default = 1
+  type        = number
+  default     = 1
 }
 
 variable "WME_platform_configurations" {
   description = "WME platform instance configuration setup using ansible"
-  type = bool
-  default = false
+  type        = bool
+  default     = false
 }
 
 variable "user_license_file" {
   description = "WME user license path for upload"
-  type = string
-  default = ""
+  type        = string
+  default     = ""
 }
 
 variable "instance_addition_operation" {
   description = "Studio and AppDeploy Instance addition operation"
-  type = string
-  default = "no"
+  type        = string
+  default     = "no"
+}
+
+variable "wme_platform_version" {
+  description = "wme platform version"
+  type        = string
+  default     = "10.6.0"
 }

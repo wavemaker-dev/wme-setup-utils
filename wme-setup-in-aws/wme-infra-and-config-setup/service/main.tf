@@ -48,6 +48,10 @@ module "WME-setup" {
   wavemaker_studio_domain             = "wavemaker.mysetup.com"              # wavemaker studio url for accessing wavemaker studio
   network_interface_name              = "eth0"                               # network interface name used for WME setup,default is eth0 for ubuntu and rhel 
   cidr_range_for_docker_setup         = "10.3.1.1/24"                        # CIDR range used for Docker containers networks in WME setup
+  WME_platform_configurations = true
+  user_license_file    = "licenses.license"
+  instance_addition_operation = "yes"
+  wme_platform_version = "10.6.0"
 
 
 
