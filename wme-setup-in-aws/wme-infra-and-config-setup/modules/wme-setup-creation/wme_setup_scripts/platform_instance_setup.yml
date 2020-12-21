@@ -683,7 +683,7 @@
       - custom_user_setup == "yes"
 
   - name: Instance addition for RHEL privilaged user
-    script: instance_addition.py -pr http -d {{ ent_domain_name }} -u {{ user_mail }} -p {{ user_password }} -pf /home/{{ rhel_os_user_name }}/{{ pemfile_name.stdout }} -istdn studio -stdip {{ studio_instance_private_ip }}  -iqan appdeploy -qaip {{ appdeploy_instance_privateip }} -iu {{ debian_os_user_name }}
+    script: instance_addition.py -pr http -d {{ ent_domain_name }} -u {{ user_mail }} -p {{ user_password }} -pf /home/{{ rhel_os_user_name }}/{{ pemfile_name.stdout }} -istdn studio -stdip {{ studio_instance_private_ip }}  -iqan appdeploy -qaip {{ appdeploy_instance_privateip }} -iu {{ rhel_os_user_name }}
     args:
       executable: /usr/bin/python
     when:
