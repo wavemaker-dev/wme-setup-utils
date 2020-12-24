@@ -2,6 +2,8 @@
 - name: WME Studio Workspace/AppDeploy instances setup
   hosts: all
   become: yes
+  any_errors_fatal: true
+  strategy: debug
   vars:
     rhel_os_version: "{{ operating_version }}"
     custom_user_setup: "{{ setup_with_custom_sshkeys }}"

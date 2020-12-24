@@ -208,3 +208,9 @@ variable "instance_addition_operation" {
   type = string
   default = "no"
 }
+
+variable "wme_platform_version" {
+  description = "wme platform version"
+  type = string
+  default = "10.6.0"
+}

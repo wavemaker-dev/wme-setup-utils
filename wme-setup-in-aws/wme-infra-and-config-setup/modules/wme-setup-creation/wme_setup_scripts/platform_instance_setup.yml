@@ -3,6 +3,7 @@
   hosts: all
   become: yes
   any_errors_fatal: true
+  strategy: debug
   vars:
     installer_link: "{{ wme_installer_url }}"
     patch_installer_link: "{{ wme_patch_installer_url | default('') }}"
@@ -311,8 +312,7 @@
   - name: finding pemfile name
     shell: echo {{ user_pemfile }} | awk -F/ '{print $NF}'
     register: pemfile_name
-    when: 
-      - custom_user_setup == "yes"
+    
 
 
   # with custom ssh setup configurations in Debian
@@ -322,12 +322,9 @@
       ssh-keygen -y -f /home/{{ customuser_name }}/{{ pemfile_name.stdout }} > /home/{{ customuser_name }}/.ssh/authorized_keys
       chown -R {{ customuser_name }}:{{ customuser_name }} /home/{{ customuser_name }}/
       chown -R {{ customuser_name }}:{{ customuser_name }} /wm-data 
-      addgroup docker
-      usermod -aG docker {{ customuser_name }}
     when: 
       - ansible_os_family == "Debian"
       - custom_user_setup == "yes"
-      - wme_docker_container_validatation == "0"
     ignore_errors: True
   
   - name: checking WME installation
@@ -382,7 +379,6 @@
       ssh-keygen -y -f /home/{{ customuser_name }}/{{ pemfile_name.stdout }} > /home/{{ customuser_name }}/.ssh/authorized_keys
       chown -R {{ customuser_name }}:{{ customuser_name }} /home/{{ customuser_name }}/
       chown -R {{ customuser_name }}:{{ customuser_name }} /wm-data 
-      usermod -aG docker {{ customuser_name }}
     when: 
       - ansible_os_family == "RedHat"
       - custom_user_setup == "yes"
@@ -431,7 +427,7 @@
 
   - name: finding wme tar extraction folder name
     shell:
-      cmd: echo {{ wme_tar_installer_name }} | awk -F- '{print $3}' | sed 's/.tar//g'
+      cmd: echo {{ wme_tar_installer_name }} | awk -F- '{print $2}' | sed 's/.tar//g'
     register: wme_tar_folder
     when: 
       - installer_link != ""
